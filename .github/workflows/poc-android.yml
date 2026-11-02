@@ -1,0 +1,64 @@
+# POC: build this sample RN app on the pitstop-ci self-hosted Linux runner.
+name: POC Android (self-hosted)
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: poc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, android]   # docker-compose POC runner labels; for ARC use: android-linux
+    timeout-minutes: 40
+    env:
+      NODE_OPTIONS: --max_old_space_size=8192
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Versions (sanity — proves the baked toolchain)
+        run: |
+          node -v
+          corepack yarn --version || yarn --version
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Cache Yarn + node_modules
+        uses: actions/cache@v4.2.3
+        with:
+          path: |
+            .yarn-cache
+            node_modules
+          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock', 'package.json') }}
+          restore-keys: yarn-${{ runner.os }}-
+
+      - name: Install JS deps
+        env:
+          YARN_CACHE_FOLDER: ${{ github.workspace }}/.yarn-cache
+        run: |
+          set -euo pipefail
+          corepack enable || true
+          corepack yarn install --frozen-lockfile --network-timeout 600000 \
+            || corepack yarn install --network-timeout 600000
+
+      - name: Cache Gradle
+        uses: actions/cache@v4.2.3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Gradle assembleRelease
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon --build-cache --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: RnPoc-release
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
